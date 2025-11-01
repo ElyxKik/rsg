@@ -1,7 +1,7 @@
 'use client';
 
 import { motion, AnimatePresence } from 'framer-motion';
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef } from 'react';
 import { ZoomIn, ZoomOut, Download, Maximize2 } from 'lucide-react';
 
 interface Province {
