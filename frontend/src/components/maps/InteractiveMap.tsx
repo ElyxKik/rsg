@@ -26,8 +26,7 @@ interface InteractiveMapProps {
 export default function InteractiveMap({ 
   onProvinceSelect, 
   selectedProvince: externalSelectedProvince,
-  year = 2025,
-  metric = 'coverage'
+  year = 2025
 }: InteractiveMapProps) {
   const [hoveredProvince, setHoveredProvince] = useState<string | null>(null);
   const [selectedProvince, setSelectedProvince] = useState<string | null>(externalSelectedProvince || null);
