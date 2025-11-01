@@ -1,0 +1,226 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: rsg-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres_dev_password
+      POSTGRES_DB: rsg_db
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=en_US.UTF-8"
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./infrastructure/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - rsg-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # Redis Cache
+  redis:
+    image: redis:7-alpine
+    container_name: rsg-redis
+    command: redis-server --appendonly yes --requirepass redis_dev_password
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - rsg-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # pgAdmin (Database Management)
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: rsg-pgadmin
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@rsg.gov.cd
+      PGADMIN_DEFAULT_PASSWORD: pgadmin_dev_password
+      PGADMIN_CONFIG_SERVER_MODE: 'False'
+    ports:
+      - "5050:80"
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+    networks:
+      - rsg-network
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # Redis Commander (Redis Management)
+  redis-commander:
+    image: rediscommander/redis-commander:latest
+    container_name: rsg-redis-commander
+    environment:
+      REDIS_HOSTS: local:redis:6379:0:redis_dev_password
+    ports:
+      - "8081:8081"
+    networks:
+      - rsg-network
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # Strapi CMS Backend
+  strapi:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: rsg-strapi
+    environment:
+      NODE_ENV: development
+      DATABASE_CLIENT: postgres
+      DATABASE_HOST: postgres
+      DATABASE_PORT: 5432
+      DATABASE_NAME: rsg_db
+      DATABASE_USERNAME: postgres
+      DATABASE_PASSWORD: postgres_dev_password
+      JWT_SECRET: strapi_jwt_secret_dev_key_change_in_production
+      ADMIN_JWT_SECRET: strapi_admin_jwt_secret_dev_key_change_in_production
+      API_TOKEN_SALT: strapi_api_token_salt_dev_key_change_in_production
+      TRANSFER_TOKEN_SALT: strapi_transfer_token_salt_dev_key_change_in_production
+      REDIS_URL: redis://:redis_dev_password@redis:6379
+      ENCRYPTION_KEY: strapi_encryption_key_dev_32_chars_min
+      STRAPI_LOG_LEVEL: debug
+    ports:
+      - "1337:1337"
+    volumes:
+      - ./backend/src:/app/src
+      - ./backend/config:/app/config
+      - strapi_uploads:/app/public/uploads
+    networks:
+      - rsg-network
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:1337/admin"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    restart: unless-stopped
+
+  # Frontend Next.js (Public)
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: rsg-frontend
+    environment:
+      NODE_ENV: development
+      NEXT_PUBLIC_API_URL: http://localhost:1337
+      NEXT_PUBLIC_INTRANET_URL: http://localhost:3001
+      NEXTAUTH_URL: http://localhost:3000
+      NEXTAUTH_SECRET: frontend_nextauth_secret_dev_key_change_in_production
+      NEXT_PUBLIC_MATOMO_URL: http://localhost:8080
+      NEXT_PUBLIC_MATOMO_SITE_ID: 1
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./frontend/src:/app/src
+      - ./frontend/public:/app/public
+    networks:
+      - rsg-network
+    depends_on:
+      strapi:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    restart: unless-stopped
+
+  # Intranet Next.js (Private)
+  intranet:
+    build:
+      context: ./intranet
+      dockerfile: Dockerfile
+    container_name: rsg-intranet
+    environment:
+      NODE_ENV: development
+      NEXT_PUBLIC_API_URL: http://localhost:1337
+      NEXT_PUBLIC_INTRANET_API_URL: http://localhost:1337/api/intranet
+      NEXTAUTH_URL: http://localhost:3001
+      NEXTAUTH_SECRET: intranet_nextauth_secret_dev_key_change_in_production
+    ports:
+      - "3001:3000"
+    volumes:
+      - ./intranet/src:/app/src
+      - ./intranet/public:/app/public
+    networks:
+      - rsg-network
+    depends_on:
+      strapi:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    restart: unless-stopped
+
+  # Matomo Analytics (Optional)
+  matomo:
+    image: matomo:latest
+    container_name: rsg-matomo
+    environment:
+      MATOMO_DATABASE_HOST: postgres
+      MATOMO_DATABASE_DBNAME: matomo_db
+      MATOMO_DATABASE_USERNAME: postgres
+      MATOMO_DATABASE_PASSWORD: postgres_dev_password
+      MATOMO_DATABASE_ADAPTER: PDO\MYSQL
+    ports:
+      - "8080:80"
+    volumes:
+      - matomo_data:/var/www/html
+    networks:
+      - rsg-network
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # Mailhog (Email Testing)
+  mailhog:
+    image: mailhog/mailhog:latest
+    container_name: rsg-mailhog
+    ports:
+      - "1025:1025"
+      - "8025:8025"
+    networks:
+      - rsg-network
+    restart: unless-stopped
+
+networks:
+  rsg-network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+    driver: local
+  pgadmin_data:
+    driver: local
+  redis_data:
+    driver: local
+  strapi_uploads:
+    driver: local
+  matomo_data:
+    driver: local
